@@ -1,73 +1,48 @@
 module spi_master (
-    input  wire       clk,        // System clock
-    input  wire       rst_n,      // Active-low reset
-    input  wire       start,      // Start transaction
-    input  wire [7:0] mosi_data,  // Data to send
-    output reg  [7:0] miso_data,  // Data received from slave
-    output reg        busy,       // Busy flag
-
-    // SPI signals
-    output reg        sclk,       // SPI Clock
-    output reg        mosi,       // Master Out
-    input  wire       miso,       // Master In
-    output reg        cs_n        // Active-low chip select
+    input  wire clk,
+    input  wire rst,
+    input  wire start,
+    input  wire [7:0] tx_data,
+    output reg  [7:0] rx_data,
+    output reg sclk,
+    output reg mosi,
+    input  wire miso,
+    output reg cs_n,
+    output reg done
 );
 
-    reg [2:0] bit_cnt;
     reg [7:0] shift_reg_tx, shift_reg_rx;
+    reg [2:0] bit_cnt;
     reg [1:0] state;
 
     localparam IDLE = 2'b00, LOAD = 2'b01, TRANSFER = 2'b10, DONE = 2'b11;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state       <= IDLE;
-            cs_n        <= 1'b1;
-            sclk        <= 1'b0;
-            busy        <= 1'b0;
-            bit_cnt     <= 3'd0;
-            mosi        <= 1'b0;
-            miso_data   <= 8'h00;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            sclk <= 0; cs_n <= 1; done <= 0; mosi <= 0;
+            shift_reg_tx <= 0; shift_reg_rx <= 0; rx_data <= 0; bit_cnt <= 0; state <= IDLE;
         end else begin
             case (state)
                 IDLE: begin
-                    cs_n <= 1'b1;
-                    sclk <= 1'b0;
-                    busy <= 1'b0;
-                    if (start) begin
-                        shift_reg_tx <= mosi_data;
-                        shift_reg_rx <= 8'h00;
-                        bit_cnt      <= 3'd7;
-                        state        <= LOAD;
-                        busy         <= 1'b1;
-                    end
+                    done <= 0; cs_n <= 1; sclk <= 0;
+                    if (start) state <= LOAD;
                 end
-
                 LOAD: begin
-                    cs_n <= 1'b0;  // Select slave
-                    mosi <= shift_reg_tx[7]; // Send MSB first
-                    state <= TRANSFER;
+                    shift_reg_tx <= tx_data; bit_cnt <= 3'd7; cs_n <= 0; state <= TRANSFER;
                 end
-
                 TRANSFER: begin
-                    sclk <= ~sclk;  // Toggle clock
-                    if (sclk == 1'b1) begin
-                        // Sample MISO on rising edge
+                    sclk <= ~sclk;
+                    if (sclk) begin
                         shift_reg_rx <= {shift_reg_rx[6:0], miso};
                     end else begin
-                        // Shift MOSI on falling edge
+                        mosi <= shift_reg_tx[7];
                         shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
-                        mosi <= shift_reg_tx[6];
                         if (bit_cnt == 0) state <= DONE;
                         else bit_cnt <= bit_cnt - 1;
                     end
                 end
-
                 DONE: begin
-                    cs_n      <= 1'b1;
-                    miso_data <= shift_reg_rx;
-                    busy      <= 1'b0;
-                    state     <= IDLE;
+                    rx_data <= shift_reg_rx; cs_n <= 1; done <= 1; state <= IDLE;
                 end
             endcase
         end
